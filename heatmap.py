@@ -1,90 +1,64 @@
 import torch
 from PIL import Image
-from transformers.utils.import_utils import is_flash_attn_2_available
 
-from colpali_engine.models import ColQwen2, ColQwen2Processor, ColPali, ColPaliProcessor
-import os
-from colpali_engine.interpretability import get_similarity_maps_from_embeddings
-import matplotlib.pyplot as plt
-import numpy as np
+from colpali_engine.interpretability import (
+    get_similarity_maps_from_embeddings,
+    plot_all_similarity_maps,
+)
+from colpali_engine.models import ColPali, ColPaliProcessor
+from colpali_engine.utils.torch_utils import get_torch_device
 
-# 禁用所有网络请求，强制使用本地文件（保持不变）
-os.environ["TRANSFORMERS_OFFLINE"] = "1"
-os.environ["HF_DATASETS_OFFLINE"] = "1"
-os.environ["HF_HUB_OFFLINE"] = "1"  # 新增，彻底禁用huggingface hub网络请求
+model_name = "./models/colpali-v1.3-merged"
+device = get_torch_device("auto")
 
-# 本地模型路径（替换为colpali的本地目录，无需基础模型路径）
-local_model_path = "./models/colpali-v1.3-merged"  # 确保该目录下有从vidore/colpali下载的所有文件
-n_patches = (16, 16)
-# 加载模型（替换为ColPali，移除base_model_path参数）
+# Load the model
 model = ColPali.from_pretrained(
-    local_model_path,
+    model_name,
     torch_dtype=torch.bfloat16,
-    device_map="cuda:0",  # 无GPU可改为"cpu"
-    attn_implementation="flash_attention_2" if is_flash_attn_2_available() else None,
-    local_files_only=True,  # 强制使用本地文件
-    trust_remote_code=True  # 必需，colpali含自定义模型代码
+    device_map=device,
 ).eval()
 
-# 加载处理器（替换为ColPaliProcessor，无需base_model_path）
-processor = ColPaliProcessor.from_pretrained(
-    local_model_path,
-    local_files_only=True  # 强制使用本地文件
+# Load the processor
+processor = ColPaliProcessor.from_pretrained(model_name)
+
+# Load the image and query
+image = Image.open("shift_kazakhstan.jpg")
+query = "Quelle partie de la production pétrolière du Kazakhstan provient de champs en mer ?"
+
+# Preprocess inputs
+batch_images = processor.process_images([image]).to(device)
+batch_queries = processor.process_queries([query]).to(device)
+
+# Forward passes
+with torch.no_grad():
+    image_embeddings = model.forward(**batch_images)
+    query_embeddings = model.forward(**batch_queries)
+
+# Get the number of image patches
+n_patches = processor.get_n_patches(image_size=image.size, patch_size=model.patch_size)
+
+# Get the tensor mask to filter out the embeddings that are not related to the image
+image_mask = processor.get_image_mask(batch_images)
+
+# Generate the similarity maps
+batched_similarity_maps = get_similarity_maps_from_embeddings(
+    image_embeddings=image_embeddings,
+    query_embeddings=query_embeddings,
+    n_patches=n_patches,
+    image_mask=image_mask,
 )
 
-# # 查看模型支持的方法
-# print(dir(model))  # 输出模型所有可用方法
-# # 检查processor是否提供高级功能
-# print(dir(processor))
+# Get the similarity map for our (only) input image
+similarity_maps = batched_similarity_maps[0]  # (query_length, n_patches_x, n_patches_y)
 
-# Your inputs
-images = [
-    Image.new("RGB", (128, 128), color="white"),
-    Image.new("RGB", (64, 32), color="black"),
-]
-queries = [
-    "What is the organizational structure for our R&D department?",
-    "Can you provide a breakdown of last year’s financial performance?",
-]
+# Tokenize the query
+query_tokens = processor.tokenizer.tokenize(query)
 
-# Process the inputs
-batch_images = processor.process_images(images).to(model.device)
-batch_queries = processor.process_queries(queries).to(model.device)
-
-# Forward pass
-with torch.no_grad():
-    image_embeddings = model(**batch_images)
-    query_embeddings = model(**batch_queries)
-
-    # 假设已获得图像嵌入和查询嵌入
-    image_embeddings = model(**batch_images)  # 图像的多向量嵌入
-    query_embeddings = model(**batch_queries)  # 查询的多向量嵌入
-
-    # 获取图像的 patch 掩码（用于过滤无关区域）
-    image_mask = processor.get_image_mask(batch_images)
-
-    # 生成相似度热图（返回每个图像的热图）
-    batched_similarity_maps = get_similarity_maps_from_embeddings(
-        image_embeddings=image_embeddings,
-        query_embeddings=query_embeddings,
-        n_patches=n_patches,  # 图像被分割的 patch 数量（如 16×16=256）
-        image_mask=image_mask,
-    )
-
-
-    # 可视化单个图像的热图
-    def visualize_heatmap(image, heatmap, alpha=0.6):
-        plt.figure(figsize=(10, 10))
-        plt.imshow(image)  # 显示原始图像
-        plt.imshow(heatmap, cmap='jet', alpha=alpha)  # 叠加热图
-        plt.colorbar()  # 显示颜色刻度
-        plt.axis('off')
-        plt.show()
-
-
-    # 示例：可视化第一张图像的热图
-    visualize_heatmap(
-        image=images[0],  # PIL 图像
-        heatmap=batched_similarity_maps[0].reshape(n_patches, n_patches),
-        alpha=0.6  # 热图透明度
-    )
+# Plot and save the similarity maps for each query token
+plots = plot_all_similarity_maps(
+    image=image,
+    query_tokens=query_tokens,
+    similarity_maps=similarity_maps,
+)
+for idx, (fig, ax) in enumerate(plots):
+    fig.savefig(f"similarity_map_{idx}.png")
