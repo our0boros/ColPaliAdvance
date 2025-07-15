@@ -55,15 +55,17 @@ ColPali 是一种高效的文档检索模型，专为处理富含视觉信息的
 - **最终得分**：所有查询 token 的最大相似度之和，作为文档与查询的相关性分数。
 
   数学表达：
-  \[
+  $$
   \text{Similarity}(e'_i, e_j) = e'_i \cdot e_j
-  \]
-  \[
+  $$
+  
+  $$
   \text{MaxSim}(e'_i, E_{\text{img}}) = \max_{j=1}^{m} \langle e'_i, e_j \rangle
-  \]
-  \[
+  $$
+  
+  $$
   \text{Score} = \sum_{i=1}^n \text{MaxSim}(e'_i, E_{\text{img}})
-  \]
+  $$
 
 ---
 
@@ -735,21 +737,21 @@ last_hidden_states = outputs.hidden_states[-1]
             (masked), the loss is only computed for the tokens with labels in `[0, ..., config.text_config.vocab_size]`.
 
         Example:
-
+    
         ```python
         >>> from PIL import Image
         >>> import requests
         >>> from transformers import AutoProcessor, PaliGemmaForConditionalGeneration
-
+    
         >>> model = PaliGemmaForConditionalGeneration.from_pretrained("google/paligemma2-3b-mix-224")
         >>> processor = AutoProcessor.from_pretrained("google/paligemma2-3b-mix-224")
-
+    
         >>> prompt = "Where is the cat standing?"
         >>> url = "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/pipeline-cat-chonk.jpeg"
         >>> image = Image.open(requests.get(url, stream=True).raw)
-
+    
         >>> inputs = processor(images=image, text=prompt,  return_tensors="pt")
-
+    
         >>> # Generate
         >>> generate_ids = model.generate(**inputs,)
         >>> processor.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
@@ -760,7 +762,7 @@ last_hidden_states = outputs.hidden_states[-1]
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
+    
         outputs = self.model(
             input_ids=input_ids,
             pixel_values=pixel_values,
@@ -777,18 +779,18 @@ last_hidden_states = outputs.hidden_states[-1]
             cache_position=cache_position,
             **kwargs,
         )
-
+    
         hidden_states = outputs[0]
         # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
         slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
         logits = self.lm_head(hidden_states[:, slice_indices, :])
-
+    
         loss = None
         if labels is not None:
             loss = self.loss_function(
                 logits=logits, labels=labels, vocab_size=self.config.text_config.vocab_size, **kwargs
             )
-
+    
         return PaliGemmaCausalLMOutputWithPast(
             loss=loss,
             logits=logits,
@@ -907,27 +909,27 @@ class PaliGemmaModel(PaliGemmaPreTrainedModel):
         self.vision_tower = AutoModel.from_config(config=config.vision_config)
         self.multi_modal_projector = PaliGemmaMultiModalProjector(config)
         self.vocab_size = config.text_config.vocab_size
-
+    
         language_model = AutoModel.from_config(config=config.text_config)
         self.language_model = language_model
-
+    
         self.pad_token_id = self.config.pad_token_id if self.config.pad_token_id is not None else -1
         self.post_init()
-
+    
     # Copied from transformers.models.llava.modeling_llava.LlavaModel.get_input_embeddings with Llava->PaliGemma
     def get_input_embeddings(self):
         return self.language_model.get_input_embeddings()
-
+    
     # Copied from transformers.models.llava.modeling_llava.LlavaModel.set_input_embeddings with Llava->PaliGemma
     def set_input_embeddings(self, value):
         self.language_model.set_input_embeddings(value)
-
+    
     def set_decoder(self, decoder):
         self.language_model = decoder
-
+    
     def get_decoder(self):
         return self.language_model
-
+    
     def _update_causal_mask(
         self,
         attention_mask,
@@ -946,7 +948,7 @@ class PaliGemmaModel(PaliGemmaPreTrainedModel):
         min_dtype = torch.finfo(self.dtype).min
         if input_tensor is None:
             input_tensor = attention_mask
-
+    
         inputs_lead_dim, sequence_length = input_tensor.shape[:2]
         if using_static_cache:
             target_length = past_key_values.get_max_cache_shape()
@@ -958,11 +960,11 @@ class PaliGemmaModel(PaliGemmaPreTrainedModel):
                 if isinstance(attention_mask, torch.Tensor)
                 else cache_position[0] + sequence_length + 1
             )
-
+    
         if attention_mask is not None and attention_mask.dim() == 4:
             # In this case we assume that the mask comes already in inverted form and requires no inversion or slicing.
             return attention_mask
-
+    
         causal_mask = torch.full(
             (sequence_length, target_length), fill_value=min_dtype, dtype=self.dtype, device=cache_position.device
         )
@@ -972,13 +974,13 @@ class PaliGemmaModel(PaliGemmaPreTrainedModel):
                 causal_mask = torch.triu(causal_mask, diagonal=1)
             else:
                 causal_mask[:, :sequence_length] = 0.0
-
+    
         causal_mask *= torch.arange(target_length, device=cache_position.device) > cache_position.reshape(-1, 1)
         causal_mask = causal_mask[None, None, :, :].expand(inputs_lead_dim, 1, -1, -1)
         if attention_mask is not None:
             causal_mask = causal_mask.clone()  # copy to contiguous memory for in-place edit
             mask_length = attention_mask.shape[-1]
-
+    
             # First unmask prefix tokens during training
             if is_training:
                 if token_type_ids is None:
@@ -986,20 +988,20 @@ class PaliGemmaModel(PaliGemmaPreTrainedModel):
                 causal_mask[:, :, :, :mask_length] = causal_mask[:, :, :, :mask_length].masked_fill(
                     token_type_ids[:, None, None, :].to(causal_mask.device) == 0, 0
                 )
-
+    
             # Then apply padding mask (will mask pad tokens)
             padding_mask = causal_mask[:, :, :, :mask_length] + attention_mask[:, None, None, :].to(causal_mask.device)
             padding_mask = padding_mask == 0
             causal_mask[:, :, :, :mask_length] = causal_mask[:, :, :, :mask_length].masked_fill(
                 padding_mask, min_dtype
             )
-
+    
         return causal_mask
-
+    
     def get_image_features(self, pixel_values: torch.FloatTensor):
         """
         Obtains image last hidden states from the vision tower and apply multimodal projection.
-
+    
         Args:
             pixel_values (`torch.FloatTensor]` of shape `(batch_size, channels, height, width)`)
                The tensors corresponding to the input images.
@@ -1011,7 +1013,7 @@ class PaliGemmaModel(PaliGemmaPreTrainedModel):
         image_features = self.multi_modal_projector(selected_image_feature)
         image_features = image_features / (self.config.text_config.hidden_size**0.5)
         return image_features
-
+    
     @can_return_tuple
     @auto_docstring
     def forward(
@@ -1036,40 +1038,40 @@ class PaliGemmaModel(PaliGemmaPreTrainedModel):
             Labels for computing the masked language modeling loss. Indices should either be in `[0, ...,
             config.text_config.vocab_size]` or -100 (see `input_ids` docstring). Tokens with indices set to `-100` are ignored
             (masked), the loss is only computed for the tokens with labels in `[0, ..., config.text_config.vocab_size]`.
-
+    
         Example:
-
+    
         ```python
         >>> from PIL import Image
         >>> import requests
         >>> from transformers import AutoProcessor, PaliGemmaForConditionalGeneration
-
+    
         >>> model = PaliGemmaForConditionalGeneration.from_pretrained("google/paligemma2-3b-mix-224")
         >>> processor = AutoProcessor.from_pretrained("google/paligemma2-3b-mix-224")
-
+    
         >>> prompt = "Where is the cat standing?"
         >>> url = "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/pipeline-cat-chonk.jpeg"
         >>> image = Image.open(requests.get(url, stream=True).raw)
-
+    
         >>> inputs = processor(images=image, text=prompt,  return_tensors="pt")
-
+    
         >>> # Generate
         >>> generate_ids = model.generate(**inputs,)
         >>> processor.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
         "Where is the cat standing?\nsnow"
         ```"""
-
+    
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
-
+    
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
+    
         is_training = token_type_ids is not None and labels is not None
-
+    
         # Replace image id woth PAD if the image token if OOV, to avoid index-errors
         if input_ids is not None and self.config.image_token_id >= self.vocab_size:
             special_image_mask = input_ids == self.config.image_token_id
@@ -1077,23 +1079,23 @@ class PaliGemmaModel(PaliGemmaPreTrainedModel):
             llm_input_ids[special_image_mask] = 0
         else:
             llm_input_ids = input_ids
-
+    
         if inputs_embeds is None:
             inputs_embeds = self.get_input_embeddings()(llm_input_ids)
-
+    
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
             cache_position = torch.arange(
                 past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
             )
-
+    
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0) + 1  # Paligemma positions are 1-indexed
-
+    
         # Merge text and images
         if pixel_values is not None:
             image_features = self.get_image_features(pixel_values)
-
+    
             if input_ids is None:
                 special_image_mask = inputs_embeds == self.get_input_embeddings()(
                     torch.tensor(self.config.image_token_id, dtype=torch.long, device=inputs_embeds.device)
@@ -1101,7 +1103,7 @@ class PaliGemmaModel(PaliGemmaPreTrainedModel):
             else:
                 special_image_mask = (input_ids == self.config.image_token_id).unsqueeze(-1)
                 special_image_mask = special_image_mask.expand_as(inputs_embeds).to(inputs_embeds.device)
-
+    
             if not is_torchdynamo_compiling() and inputs_embeds[special_image_mask].numel() != image_features.numel():
                 image_tokens_in_text = (special_image_mask).sum(dim=1).sum(dim=0)[0]
                 raise ValueError(
@@ -1111,7 +1113,7 @@ class PaliGemmaModel(PaliGemmaPreTrainedModel):
                 )
             image_features = image_features.to(inputs_embeds.device, inputs_embeds.dtype)
             inputs_embeds = inputs_embeds.masked_scatter(special_image_mask, image_features)
-
+    
         causal_mask = self._update_causal_mask(
             attention_mask, token_type_ids, past_key_values, cache_position, inputs_embeds, is_training
         )
@@ -1127,7 +1129,7 @@ class PaliGemmaModel(PaliGemmaPreTrainedModel):
             cache_position=cache_position,
             **kwargs,
         )
-
+    
         return PaligemmaModelOutputWithPast(
             last_hidden_state=outputs.last_hidden_state,
             past_key_values=outputs.past_key_values,
@@ -1495,17 +1497,19 @@ vision tower 是谁？
 
 **User**
 
-        elif vision_config is None:
-            self.vision_config = CONFIG_MAPPING["siglip_vision_model"](
-                intermediate_size=4096,
-                hidden_size=1152,
-                patch_size=14,
-                image_size=224,
-                num_hidden_layers=27,
-                num_attention_heads=16,
-                vocab_size=257152,
-                vision_use_head=False,
-            )
+```python
+    elif vision_config is None:
+        self.vision_config = CONFIG_MAPPING["siglip_vision_model"](
+            intermediate_size=4096,
+            hidden_size=1152,
+            patch_size=14,
+            image_size=224,
+            num_hidden_layers=27,
+            num_attention_heads=16,
+            vocab_size=257152,
+            vision_use_head=False,
+        )
+```
 所以这里的 tower 其实产出的是 14x14 的 patch
 
 ---

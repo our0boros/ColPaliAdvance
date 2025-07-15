@@ -1,2 +1,5 @@
 .idea/*
 models/*
+test_data/*
+test_output/*
+colpali/*
