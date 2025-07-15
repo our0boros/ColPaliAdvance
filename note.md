@@ -41,3 +41,32 @@ tensor([[15.6875, 16.1250, 11.1875,  8.5000, 15.2500, 14.0000, 14.5625, 14.6250,
   排名 3: 图像索引=25, 分数=15.5625
 ```
 
+考虑到 ColPali 与 RAG 和 VLM 存在关联 索引度最高的 文件中也存在 相关描述，添加两篇相关论文查看是否存在最高值的索引
+
+```
+root@I228c2aae0800a01fde:/hy-tmp/ColPaliAdvance# vim qwen2_token_pooling.py 
+root@I228c2aae0800a01fde:/hy-tmp/ColPaliAdvance# python qwen2_token_pooling.py 
+Using a slow image processor as `use_fast` is unset and a slow processor was saved with this model. `use_fast=True` will be the default behavior in v4.52, even if the model was saved with a slow processor. This will result in minor differences in outputs. You'll still be able to use a slow processor with `use_fast=False`.
+You have video processor config saved in `preprocessor.json` file which is deprecated. Video processor configs should be saved in their own `video_preprocessor.json` file. You can rename the file or load and save the processor back which renames it automatically. Loading from `preprocessor.json` will be removed in v5.0.
+已加载缓存: 1 个PDF文件
+从缓存加载: ./test_data/2407.01449v6.pdf
+处理新PDF: ./test_data/2105.09996v3.pdf
+已保存缓存到 ./cache/embeddings_cache.json
+处理新PDF: ./test_data/2005.11401.pdf
+已保存缓存到 ./cache/embeddings_cache.json
+
+查询: What is ColPali?
+排名 1: 相似度=0.2732, PDF: 2407.01449v6.pdf, 页面: 2
+排名 2: 相似度=0.2432, PDF: 2407.01449v6.pdf, 页面: 22
+排名 3: 相似度=0.2052, PDF: 2407.01449v6.pdf, 页面: 23
+
+查询: How does ColPali work?
+排名 1: 相似度=0.2618, PDF: 2407.01449v6.pdf, 页面: 2
+排名 2: 相似度=0.2321, PDF: 2407.01449v6.pdf, 页面: 23
+排名 3: 相似度=0.2299, PDF: 2407.01449v6.pdf, 页面: 22
+root@I228c2aae0800a01fde:/hy-tmp/ColPaliAdvance# 
+
+```
+
+目前看来是不存在的，因此考虑是否通过这一部分的优化能实现更高精度的索引
+

@@ -18,7 +18,7 @@ class ColPaliRetriever:
             torch_dtype=torch.float16,  # 使用float16降低内存占用
             device_map="cuda:0",
             attn_implementation="flash_attention_2" if is_flash_attn_2_available() else None,
-            gradient_checkpointing=True,  # 启用梯度检查点减少内存
+            # gradient_checkpointing=True,  # 启用梯度检查点减少内存
         ).eval()
 
         self.processor = ColQwen2Processor.from_pretrained(model_path)
@@ -197,7 +197,8 @@ class ColPaliRetriever:
 # 使用示例
 if __name__ == "__main__":
     local_model_path = "./models/colqwen2-v1.0-merged"
-    pdf_paths = ["./test_data/2407.01449v6.pdf"]
+    # pdf_paths = ["./test_data/2407.01449v6.pdf"]
+    pdf_paths = ["./test_data/2407.01449v6.pdf", "./test_data/2105.09996v3.pdf", "./test_data/2005.11401.pdf"]
 
     # 初始化检索器
     retriever = ColPaliRetriever(local_model_path)
