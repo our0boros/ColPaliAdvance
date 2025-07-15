@@ -209,7 +209,10 @@ if __name__ == "__main__":
     # 查询示例
     queries = [
         "What is ColPali?",
-        "How does ColPali work?"
+        "How does ColPali work?",
+        "Do you know VLM?",
+        "Whats the relation between ColPali and RAG?",
+        "How does RAG work?"
     ]
 
     for query in queries:
