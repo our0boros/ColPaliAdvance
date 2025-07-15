@@ -2,6 +2,7 @@ import torch
 import os
 import json
 import time
+import gc
 from PIL import Image
 from transformers.utils.import_utils import is_flash_attn_2_available
 from colpali_engine.models import ColQwen2, ColQwen2Processor
@@ -14,9 +15,10 @@ class ColPaliRetriever:
         """初始化ColPali检索器并管理缓存"""
         self.model = ColQwen2.from_pretrained(
             model_path,
-            torch_dtype=torch.bfloat16,
+            torch_dtype=torch.float16,  # 使用float16降低内存占用
             device_map="cuda:0",
             attn_implementation="flash_attention_2" if is_flash_attn_2_available() else None,
+            gradient_checkpointing=True,  # 启用梯度检查点减少内存
         ).eval()
 
         self.processor = ColQwen2Processor.from_pretrained(model_path)
@@ -47,7 +49,7 @@ class ColPaliRetriever:
             json.dump(self.pdf_cache, f)
         print(f"已保存缓存到 {self.cache_path}")
 
-    def process_pdfs(self, pdf_paths: List[str], dpi: int = 200) -> Dict[str, List[torch.Tensor]]:
+    def process_pdfs(self, pdf_paths: List[str], dpi: int = 100) -> Dict[str, List[torch.Tensor]]:
         """
         处理PDF文件并计算/加载嵌入
 
@@ -67,7 +69,8 @@ class ColPaliRetriever:
             # 检查缓存
             if pdf_hash in self.pdf_cache:
                 print(f"从缓存加载: {pdf_path}")
-                pdf_embeddings = [torch.tensor(e) for e in self.pdf_cache[pdf_hash]['embeddings']]
+                # 直接加载到GPU
+                pdf_embeddings = [torch.tensor(e).to(self.model.device) for e in self.pdf_cache[pdf_hash]['embeddings']]
             else:
                 print(f"处理新PDF: {pdf_path}")
                 # 转换PDF为图像
@@ -82,17 +85,27 @@ class ColPaliRetriever:
 
                 # 计算嵌入
                 if images:
-                    batch_images = self.processor.process_images(images).to(self.model.device)
-                    with torch.no_grad():
-                        outputs = self.model(**batch_images)
-                        # 使用平均池化获取页面级嵌入
-                        pdf_embeddings = self._pool_embeddings(outputs.last_hidden_state)
+                    batch_size = 5  # 每批次处理的页数
+                    pdf_embeddings = []
+                    for i in range(0, len(images), batch_size):
+                        batch_images = images[i:i + batch_size]
+                        processed_batch = self.processor.process_images(batch_images).to(self.model.device)
+                        with torch.no_grad():
+                            # 模型直接返回嵌入张量
+                            outputs = self.model(**processed_batch)
+                            batch_embeddings = self._pool_embeddings(outputs)
+                            pdf_embeddings.extend(batch_embeddings)
 
-                    # 保存到缓存
+                        # 清理内存
+                        del processed_batch, outputs, batch_embeddings
+                        torch.cuda.empty_cache()
+                        gc.collect()
+
+                    # 保存到缓存（转为CPU列表）
                     self.pdf_cache[pdf_hash] = {
                         'path': pdf_path,
                         'timestamp': time.time(),
-                        'embeddings': [e.tolist() for e in pdf_embeddings]
+                        'embeddings': [e.cpu().tolist() for e in pdf_embeddings]
                     }
                     self._save_cache()
 
@@ -110,21 +123,22 @@ class ColPaliRetriever:
         应用token pooling策略获取固定长度的表示
 
         Args:
-            hidden_states: 模型输出的隐藏状态 [batch_size, seq_len, hidden_dim]
-            strategy: 池化策略 ("mean", "cls", "max")
+            hidden_states: 模型输出的嵌入张量 [batch_size, num_patches, embedding_dim]
+            strategy: 池化策略 ("mean", "max")
 
         Returns:
             池化后的嵌入列表
         """
+        if len(hidden_states.shape) != 3:
+            raise ValueError(
+                f"期望嵌入张量形状为 [batch_size, num_patches, embedding_dim]，但得到 {hidden_states.shape}")
+
         if strategy == "mean":
-            # 平均池化：对序列维度取平均
-            return [emb.mean(dim=0) for emb in hidden_states]
-        elif strategy == "cls":
-            # CLS池化：使用第一个token
-            return [emb[0] for emb in hidden_states]
+            # 平均池化：对所有patch的嵌入取平均
+            return [hidden_states[i].mean(dim=0) for i in range(hidden_states.shape[0])]
         elif strategy == "max":
-            # 最大池化：对序列维度取最大值
-            return [emb.max(dim=0)[0] for emb in hidden_states]
+            # 最大池化：对所有patch的嵌入取最大值
+            return [hidden_states[i].max(dim=0)[0] for i in range(hidden_states.shape[0])]
         else:
             raise ValueError(f"不支持的池化策略: {strategy}")
 
@@ -153,14 +167,18 @@ class ColPaliRetriever:
         batch_queries = self.processor.process_queries([query]).to(self.model.device)
         with torch.no_grad():
             query_output = self.model(**batch_queries)
-            query_embedding = self._pool_embeddings(query_output.last_hidden_state)[0]
+            query_embedding = self._pool_embeddings(query_output)[0]
 
         # 计算相似度
         similarities = []
         for i, page_embedding in enumerate(pdf_data['embeddings']):
+            # 确保所有嵌入在同一设备上
+            page_embedding = page_embedding.to(query_embedding.device)
             # 计算余弦相似度
-            sim = torch.cosine_similarity(query_embedding.unsqueeze(0),
-                                          page_embedding.unsqueeze(0)).item()
+            sim = torch.cosine_similarity(
+                query_embedding.unsqueeze(0),
+                page_embedding.unsqueeze(0)
+            ).item()
             similarities.append((sim, i))
 
         # 排序并获取前k个结果
